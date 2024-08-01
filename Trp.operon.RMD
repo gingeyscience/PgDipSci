@@ -1,0 +1,286 @@
+---
+title: "Trp.operon"
+author: '9290440'
+date: "2 August 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library("readxl")
+library("tidyverse")
+library("kableExtra")
+library(forcats)
+library(gapminder)
+library(writexl)
+library(data.table)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(tinytex)
+```
+
+```{r}
+setwd("C:/Users/kelse/Dropbox/Bits for Dropbox that I want private atm/Project Directory/")
+
+Complete.genomes = read_excel("Complete genome.xlsx")
+trp.info = read_excel("Complete trp .xlsx")
+
+temp_info = read_excel("k_genome_hypothetical.xlsx")
+temp_info = temp_info[13]
+
+Complete.genomes = cbind(Complete.genomes, temp_info)
+
+trp.info.exclude <- trp.info %>% filter(Gene == "trpR" | Gene == "trpS")
+trp.info <- setdiff(trp.info, trp.info.exclude)
+
+trp.info.scaffold <- trp.info %>% filter(`Genome Name` =="Armatimonas rosea DSM 23562" | `Genome Name` == "Chloracidobacterium thermophilum B" | `Genome Name` == "Chloroflexus islandicus isl-2" | `Genome Name` == "Deinococcus proteolyticus MRP, DSM 20540" | `Genome Name` == "Ktedonobacter racemifer SOSP1-21, DSM 44963
+" | `Genome Name` == "Oscillochloris trichoides DG6")
+trp.info <- setdiff(trp.info, trp.info.scaffold)
+
+trp.info$midpoint = round(((trp.info$`End Coord` - trp.info$`Start Coord`)/2)+trp.info$`Start Coord`)
+```
+
+```{r}
+#OK, so later on the code isn't going to work because there are some genomes with only one trp gene, and you can't make pairs if there is nothing to pair.
+#So first find the duplicated
+dupes<-as.data.frame(trp.info$`Genome Name`[duplicated(trp.info$`Genome Name`)])
+names(dupes)[1] <- "dupe.names"
+#And then make tr_dupes which contains the information from trp.info, exculding all the single trp gene genomes. 
+tr_dupes<-trp.info[trp.info$`Genome Name` %in% dupes$dupe.names,]
+#Convert into data table because it is easier to manipulate this way
+trp.data <- data.table(tr_dupes)
+#Make midpoint characters for easyness and because Lama said so
+trp.data$midpoint <- as.character(trp.data$midpoint)
+#Combine Gene with midpoint data and create new column called Combo with this information
+trp.data <- trp.data %>% unite("Combo", Gene:midpoint, remove = FALSE)
+#And then I come across an error, even though it worked in the trial...?
+trp.data <- lapply(split(trp.data, by = "Genome Name"),
+                     function(x)cbind(`Genome Name` = unique(x$`Genome Name`),
+                                      apply(combn(x$Combo, 2), 2, paste, collapse = "_")))
+#Make a dataframe which has the genome name and the pairwise combinations
+trp.1<-as.data.frame(do.call("rbind", trp.data))
+#Name the column Combo
+names(trp.1)[2]<-"Combo"
+#Create dataframe that has the combinations and midpoints split
+trp.2<-as.data.frame(do.call(rbind, str_split(trp.1$Combo, '_')))
+#Combine the two dataframes
+trp.combo<-cbind(trp.1, trp.2)
+#Merge separate trp genes into one column so it looks like trpA_trpB
+trp.euclidean<-trp.combo %>% 
+  unite("Both", c(V1,V3))
+##Now look at calculating Euclidean distance by turning V2 and V4 into a numeric...
+trp.euclidean$euclidean = abs(as.numeric(as.character(trp.euclidean$V2)) - as.numeric(as.character(trp.euclidean$V4)))
+```
+
+```{r}
+smalldata <- Complete.genomes[,c(5,8,14)]
+
+trp.euclidean = right_join(smalldata, trp.euclidean, by = c("Genome Name / Sample Name" = "Genome Name"))
+
+##Ok, so I want to count how many are greater than or equal to 0.5genome size
+testeroo2 <-as.data.frame(which(trp.euclidean$euclidean > (trp.euclidean$`Genome Size   * assembled`*0.5)))
+##ALRIGHTY!!! So I have 3284 objects in his.euclidean that are more than 0.5 of the genome. So now I need to write a piece of code that will tell it to work out the opposite. 
+trp.euclidean$V2 <- as.numeric(as.character(trp.euclidean$V2))
+trp.euclidean$V4 <- as.numeric(as.character(trp.euclidean$V4))
+
+trp.euclidean$ID <- seq.int(nrow(trp.euclidean))
+trp.euclidean$euclidean <- as.numeric(as.character(trp.euclidean$euclidean))
+
+#So the if statement did not work at all so now to try a new method. I am filtering everything that is less than 0.5genome into his.Good. This is my pile of "yus, you worked. you are in the good book" euclidean distances. 
+trp.Good <- dplyr::filter(trp.euclidean, trp.euclidean$euclidean <= (trp.euclidean$`Genome Size   * assembled`*0.5))
+
+#I am then filtering everything from his.euclidean that did not work very well. 
+trp.ALT <- filter(trp.euclidean, trp.euclidean$euclidean > (trp.euclidean$`Genome Size   * assembled`*0.5))
+
+#I am now going to apply my alteration to make the euclidean distances work as they are supposed to
+trp.ALT$euclidean <- (trp.ALT$`Genome Size   * assembled` - trp.ALT$V2) + trp.ALT$V4
+#And then bind the ones that worked into my good books
+trp.Good2 <- rbind(trp.Good, filter(trp.ALT, trp.ALT$euclidean <= (trp.ALT$`Genome Size   * assembled`*0.5)))
+#Now I filter again for the ones that did not get fixed in my first alteration.
+trp.ALT2 <- filter(trp.ALT, trp.ALT$euclidean > (trp.ALT$`Genome Size   * assembled`*0.5))
+#And then apply my new equation
+trp.ALT2$euclidean <- (trp.ALT2$`Genome Size   * assembled` - trp.ALT2$V4) + trp.ALT2$V2
+#Now do the final rbind
+trp.Good3 <- rbind(trp.Good2,trp.ALT2)
+##Just to check that it worked. 
+trp.ALT3 <- filter(trp.ALT2, trp.ALT2$euclidean >= (trp.ALT2$`Genome Size   * assembled`*0.5))
+#So all the stuff above worked, now to figure out why I am missing some rows.DONT WORRY. YOURE AN IDIOT AND FORGOT TO RUN THEN ENTIRE CODE EARLIER THAT REMOVED ALL THE GENOMES WITHOUT DUPLICATES AND THATS WHY IT DIDNT WORK. BUT YOURE CODE CHECKING FOUND THAT AND YOU ARE DUMDUM
+which(trp.Good3$euclidean >= (trp.Good3$`Genome Size   * assembled`*0.5))
+#And now to double double check that they are the same dataframe
+setdiff(trp.euclidean$ID, trp.Good3$ID)
+##Turns out my error was when I tried to left_join instead of right_join the genome size information to the his.euclidean dataframe. By using a left_join, I ended up adding the genomes with only 1 his gene (and therefore not able to be used in this analysis) back to my dataframe. Well done noob. And that is how I ended up with a difference and weird stuff as I had NA for some euclidean distances which is obviously not helpful. But now it is done!
+```
+
+```{r}
+as.factor(trp.Good3$Phylum)
+as.factor(trp.Good3$`Temperature Range`)
+
+names(trp.Good3)[8] <- "trp_euclidean"
+```
+
+Alright, lets do some normalisation to genome size by dividing euclidean distance by 0.5genome
+
+```{r}
+trp.Good3$normal.euclidean.trp <- trp.Good3$trp_euclidean/(trp.Good3$`Genome Size   * assembled`*0.5)
+```
+
+``` {r}
+med.trp <- trp.Good3 %>% group_by(`Genome Name / Sample Name`) %>% dplyr::select(`Genome Name / Sample Name`, Phylum, trp_euclidean)
+med.trp$trp_euclidean <- as.numeric(as.character(med.trp$trp_euclidean))
+class(med.trp$trp_euclidean)
+
+med.trp <- med.trp %>% group_by(`Genome Name / Sample Name`) %>% summarise(median(trp_euclidean))
+Complete.genomes <- left_join(Complete.genomes, med.trp, by = c("Genome Name / Sample Name" = "Genome Name / Sample Name"))
+
+Complete.genomes$normal.trp.med <- Complete.genomes$`median(trp_euclidean)` /(Complete.genomes$`Genome Size   * assembled`*0.5)
+
+highlight.complete <- Complete.genomes %>% filter(Phylum == "Armatimonadetes" | `Genome Name / Sample Name` == "Escherichia coli O157 644-PT8")
+
+ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, Complete.genomes$`median(trp_euclidean)`, .desc = TRUE, .fun = median, na.rm = TRUE), y = Complete.genomes$`median(trp_euclidean)`)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1)) + ggtitle("Median trp euclidean") + geom_point(data=highlight.complete, aes(x=Phylum,y=`median(trp_euclidean)`), color='red') + ylab("euclidean distance") + xlab("Phylum")
+
+ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, normal.trp.med, .desc = TRUE, .fun = median, na.rm = TRUE), y = Complete.genomes$normal.trp.med)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1)) + ggtitle("Normalised median trp euclidean") + geom_point(data=highlight.complete, aes(x=Phylum,y=normal.trp.med), color='red') + ylab("Normalised euclidean distance") + xlab("Phylum")
+
+
+highlight.therm = Complete.genomes %>% filter(`Temperature Range` == "Thermophile")
+highlight.psych = Complete.genomes %>% filter(`Temperature Range` == "Psychrophile")
+highlight.meso = Complete.genomes %>% filter(`Temperature Range` == "Mesophile")
+
+ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, normal.his.med, .desc = TRUE, .fun = median, na.rm = TRUE), y = Complete.genomes$normal.his.med)) + geom_boxplot() + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1)) + ggtitle("Normalised median his euclidian") + geom_point(data=highlight.therm, aes(x=Phylum,y=normal.his.med), color='firebrick1') +geom_point(data=highlight.psych, aes(x=Phylum,y=normal.his.med), color='dodgerblue4') + geom_point(data=highlight.meso, aes(x=Phylum,y=normal.his.med), color='chartreuse4')
+
+ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, Complete.genomes$`median(trp_euclidian)`, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                             y = Complete.genomes$`median(trp_euclidian)`)) +
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1)) +
+  ggtitle("Median trp euclidian, temp info") + 
+  geom_point(data=highlight.therm, aes(x=Phylum,y=`median(trp_euclidian)`), color='firebrick1')
+
+ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, normal.trp.med, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                             y = normal.trp.med)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1)) +
+  ggtitle("Normalised median trp euclidian, temp info") + 
+  geom_point(data=highlight.therm, aes(x=Phylum,
+                                       y=normal.trp.med), color='firebrick1')
+
+
+```
+
+```{r}
+highlight.ecoli <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Escherichia coli O157 644-PT8" )
+
+proteofilter <- Complete.genomes %>% filter(Phylum == "Proteobacteria")
+proteo.trp <- ggplot(proteofilter, aes(x = fct_reorder(Class, proteofilter$normal.trp.med, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                                       y = proteofilter$normal.trp.med)) + 
+  geom_boxplot() + 
+  theme_classic() +
+  geom_jitter() +
+  xlab("Class") +
+  ylab("Normalised Euclidean distance") +
+  geom_point(data=highlight.ecoli, aes(x=Class,y=normal.trp.med), color='green', size = 3)
+proteo.trp + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1))
+
+
+```
+
+What if I try colour each individual class a different colour??
+
+```{r}
+highlight.class.alpha <- Complete.genomes %>% filter(Class == "Alphaproteobacteria")
+highlight.class.gamma <- Complete.genomes %>% filter(Class == "Gammaproteobacteria")
+```
+
+Testing for normality
+
+```{r}
+shapiro.test(Complete.genomes$normal.trp.med)
+```
+OK, so this is showing me that my data is not normally distributed. Why? Because the pvalue of the Shapiro-Wilks test is <0.05.
+
+
+```{r}
+Complete.genomes %>% kruskal_test(normal.trp.med ~ Phylum)
+
+```
+
+So there is a significant difference between my phylum, now to find out what is more significant so I could plot it on my graph?
+
+```{r}
+stat.test.whole <- Complete.genomes %>% dunn_test(normal.trp.med ~ Phylum, p.adjust.method = "holm", detailed = FALSE)
+stat.test.whole.star <- stat.test.whole %>% filter(p.adj.signif == "*" | p.adj.signif == "**" | p.adj.signif == "***" | p.adj.signif == "****")
+#write.table(stat.test.whole.star, sep = ",")
+stat.test <- stat.test.whole %>% filter(p.adj.signif == "****")
+```
+
+```{r}
+highlight.complete <- Complete.genomes %>% filter(Phylum == "Armatimonadetes")
+highlight.ecoli <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Escherichia coli O157 644-PT8" )
+highlight.bsub <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Bacillus subtilis inaquosorum KCTC 13429")
+
+stat.test$y.position <- c(1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1)
+p <- ggplot(Complete.genomes, aes(x = fct_reorder(Complete.genomes$Phylum, Complete.genomes$normal.trp.med, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                                  y = Complete.genomes$normal.trp.med)) + 
+  geom_boxplot() + 
+  theme_classic() + 
+  ggtitle("Normalised median trp euclidean") + 
+  geom_point(data=highlight.complete, aes(x=Phylum,y=normal.trp.med), color='red') +
+  ylab("Normalised euclidean distance") + 
+  xlab("Phylum") + 
+  theme(axis.text.y = )
+p + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1))
+p + stat_pvalue_manual(stat.test, label = "p.adj.signif")
+
+Complete.genomes <- Complete.genomes %>% drop_na(normal.trp.med)
+
+r <- ggplot(Complete.genomes, aes(x = fct_reorder(Complete.genomes$Phylum, Complete.genomes$normal.trp.med, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                                  y = Complete.genomes$normal.trp.med)) + 
+  geom_boxplot() + 
+  theme_classic() + 
+  geom_point(data=highlight.complete, aes(x=Phylum,y=normal.trp.med), color='red') +
+  geom_point(data=highlight.ecoli, aes(x=Phylum,y=normal.trp.med), color='green') + 
+  geom_point(data=highlight.bsub, aes(x=Phylum,y=normal.trp.med), color='blue') +
+  ylab("Normalised Euclidean distance") + 
+  xlab("Phylum") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1))
+r
+
+
+```
+
+
+```{r}
+highlight.complete <- Complete.genomes %>% filter(Phylum == "Armatimonadetes")
+highlight.ecoli <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Escherichia coli O157 644-PT8" )
+highlight.bsub <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Bacillus subtilis inaquosorum KCTC 13429")
+
+Complete.genomes <- Complete.genomes %>% drop_na(normal.trp.med)
+
+q <- ggplot(Complete.genomes, aes(x = fct_reorder(Complete.genomes$Phylum, Complete.genomes$normal.trp.med, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                                  y = Complete.genomes$normal.trp.med)) + 
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1)) + 
+  geom_point(data=highlight.complete, aes(x=Phylum,y=normal.trp.med), color='red', size = 4) + 
+  ylab("Normalised euclidean distance") + 
+  theme_classic() + 
+  geom_point(data=highlight.ecoli, aes(x=Phylum,y=normal.trp.med), color='green', size = 4) + 
+  geom_point(data=highlight.bsub, aes(x=Phylum,y=normal.trp.med), color='blue', size = 4)
+
+abc <- q + coord_flip() + theme(axis.text.y = element_text(size = 16),
+                                axis.title.x = element_text(size = 16)) +
+                         theme(axis.title.y = element_blank())
+
+
+
+```
+
+```{r}
+write_xlsx(Complete.genomes, "trp.stuff.xlsx")
+```
+
+

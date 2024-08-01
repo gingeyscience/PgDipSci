@@ -1,0 +1,398 @@
+---
+title: "Sigma"
+author: '9290440'
+date: "2 August 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library("readxl")
+library("tidyverse")
+library("kableExtra")
+library(forcats)
+library(gapminder)
+library(writexl)
+library(rstatix)
+library(ggpubr)
+library(RColorBrewer)
+```
+
+
+```{r}
+Complete.genomes = read_excel("Complete genome.xlsx")
+Complete.genomes <- mutate_at(Complete.genomes, vars( "Phylum" ,"Class", "Order", "Family", "Genus", "Species"), as.factor)
+sigma.info = read_excel("Completed Sigma.xlsx")
+```
+
+Now to do a bit of cheeky sigma analysis
+```{r}
+sigma.info = sigma.info %>% group_by(`Genome Name`) %>% summarise(Sigma_Count = n())
+Complete.genomes = left_join(Complete.genomes, sigma.info, by = c("Genome Name / Sample Name" = "Genome Name"))
+##Okee so I have my sigma number, now to create the ratio column
+mutate(Complete.genomes, Genome_Size_MB = `Genome Size   * assembled`/1000000)
+Complete.genomes$Genome_Size_MB <- (Complete.genomes$`Genome Size   * assembled`/1000000)
+Complete.genomes$Sigma_Ratio <-
+  (Complete.genomes$Sigma_Count/Complete.genomes$Genome_Size_MB)
+
+#And this is now saved to my supplementary folder for later use in thesis
+sigma_excel <- Complete.genomes[,c("Genome Name / Sample Name", "IMG Genome ID", "Phylum", "Class", "Order", "Family", "Genus", "Species", "Genome_Size_MB", "Sigma_Ratio")]
+write_xlsx(sigma_excel, "C:\\Users\\kelse\\Documents\\Postgrad\\GENE480\\sigma.information.xlsx")
+```
+
+OK, now it could be cool to do the boxplot again of distributions of sigma ratios across phyla
+
+```{r}
+n_fun <- function(x){
+  return(data.frame(y = 0.95*25,
+                    label = length(x)))
+}
+
+highlight.complete.sigma <- Complete.genomes %>% filter(Phylum == "Armatimonadetes")
+highlight.ecoli <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Escherichia coli O157 644-PT8" )
+highlight.bsub <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Bacillus subtilis inaquosorum KCTC 13429")
+
+sigma.thesis <- ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, Sigma_Ratio, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                                             y = Sigma_Ratio)) + 
+  geom_boxplot() +
+  xlab("Phylum") +ylab("Sigma factor ratio") + 
+  geom_point(data=highlight.complete.sigma, aes(x=Phylum,y=Sigma_Ratio), color='red') +
+  geom_point(data=highlight.ecoli, aes(x=Phylum,y=Sigma_Ratio), color='green') +
+  geom_point(data=highlight.bsub, aes(x=Phylum,y=Sigma_Ratio), color='blue') +
+  theme_classic()
+
+sigma.thesis + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1))
+```
+
+```{r}
+shapiro.test(Complete.genomes$Sigma_Ratio)
+
+Complete.genomes %>% kruskal.test(Sigma_Ratio)
+
+stat.test.whole <- Complete.genomes %>% dunn_test(Sigma_Ratio ~ Phylum, p.adjust.method = "holm", detailed = FALSE)
+stat.test.whole.star <- stat.test.whole %>% filter(p.adj.signif == "*" | p.adj.signif == "**" | p.adj.signif == "***" | p.adj.signif == "****")
+#write.table(stat.test.whole.star, sep = ",")
+stat.test <- stat.test.whole %>% filter(p.adj.signif == "****")
+```
+
+
+Maybe gene density would be better looking at coding proportion instead, as gene count/genome size is not really gene density...
+
+```{r}
+coding.prop <- read_xlsx("genome.with.coding.prop.xlsx")
+
+Complete.genomes <- left_join(Complete.genomes, coding.prop, by = c("Genome Name / Sample Name" = "Genome Name / Sample Name"))
+
+```
+
+```{r}
+ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, `Coding Base Count %   * assembled`, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                             y = Complete.genomes$`Coding Base Count %   * assembled`)) + 
+  geom_boxplot() +
+  coord_flip()
+```
+
+```{r}
+write_xlsx(Complete.genomes, "Sigma.stuff.xlsx")
+```
+
+
+```{r}
+sigma1 <- Complete.genomes %>% 
+  filter(between(Sigma_Ratio, 0, 3))
+sigma2 <- Complete.genomes %>% 
+  filter(between(Sigma_Ratio, 3, 6))
+sigma3 <- Complete.genomes %>% 
+  filter(between(Sigma_Ratio, 6, 10))
+sigma4 <- Complete.genomes %>% 
+  filter(between(Sigma_Ratio, 10, 20))
+```
+
+```{r}
+ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, `Coding Base Count %   * assembled`, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                             y = Complete.genomes$`Coding Base Count %   * assembled`)) + 
+  geom_boxplot() +
+  coord_flip() +
+  geom_point(data=sigma1, aes(x=Phylum,y=`Coding Base Count %   * assembled`), color='#1b9e77') +
+  geom_point(data=sigma2, aes(x=Phylum,y=`Coding Base Count %   * assembled`), color='#d95f02') +
+  geom_point(data=sigma3, aes(x=Phylum,y=`Coding Base Count %   * assembled`), color='#7570b3') +
+  geom_point(data=sigma4, aes(x=Phylum,y=`Coding Base Count %   * assembled`), color='#e7298a') + 
+  theme_classic() + 
+  ylab("Propotion of genome for coding") +
+  xlab("Phylum")
+```
+
+```{r}
+Ratio <- c("Sigma Ratio 0-3", "Sigma Ratio 3-6", "Sigma Ratio 6-10", "Sigma Ratio 10-20")
+x <- c(1, 2, 3, 4)
+
+y <- c(1, 2, 3, 4)
+
+df <- data.frame(Ratio, x, y)
+
+df$Ratio <- factor(df$Ratio, levels = c("Sigma Ratio 0-3", "Sigma Ratio 3-6", "Sigma Ratio 6-10", "Sigma Ratio 10-20"))
+
+legend_cols <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a")
+
+align_legend.1 <- get_legend(ggplot(df, aes(x, y)) +
+
+                             geom_point(aes(colour = Ratio), show.legend = T) +
+
+                             scale_colour_manual(values = legend_cols) +
+
+                             theme(legend.background = element_blank(),
+
+                                   legend.key = element_blank(),
+
+                                  legend.text = element_text(size = 10)))
+```
+
+##This code here is for his disorganisation and relationship to increased sigma ratios. This code is just copied from the his operon analysis with all of the graphs taken out to reduce the amount of code a bit
+
+```{r}
+his.info = read_excel("Complete his.xlsx")
+```
+
+```{r}
+his.info$midpoint = round(((his.info$`End Coord` - his.info$`Start Coord`)/2)+his.info$`Start Coord`)
+```
+
+```{r}
+#OK, so later on the code isn't going to work because there are some genomes with only one his gene, and you can't make pairs if there is nothing to pair.
+#So first find the duplicated
+his.dupes<-as.data.frame(his.info$`Genome Name`[duplicated(his.info$`Genome Name`)])
+names(his.dupes)[1] <- "dupe.names"
+#And then make tr_dupes which contains the information from trp.info, exculding all the single his gene genomes. 
+his_dupes<-his.info[his.info$`Genome Name` %in% his.dupes$dupe.names,]
+#Convert into data table because it is easier to manipulate this way
+library(data.table)
+
+his.data <- data.table(his_dupes)
+#Make midpoint characters for easyness and because Lama said so
+his.data$midpoint <- as.character(his.data$midpoint)
+#Combine Gene with midpoint data and create new column called Combo with this information
+his.data <- his.data %>% unite("Combo", Gene:midpoint, remove = FALSE)
+#And then I come across an error, even though it worked in the trial...?
+his.data <- lapply(split(his.data, by = "Genome Name"),
+                     function(x)cbind(`Genome Name` = unique(x$`Genome Name`),
+                                      apply(combn(x$Combo, 2), 2, paste, collapse = "_")))
+#Make a dataframe which has the genome name and the pairwise combinations
+his.1<-as.data.frame(do.call("rbind", his.data))
+#Name the column Combo
+names(his.1)[2]<-"Combo"
+#Create dataframe that has the combinations and midpoints split
+his.2<-as.data.frame(do.call(rbind, str_split(his.1$Combo, '_')))
+#Combine the two dataframes
+his.combo<-cbind(his.1, his.2)
+#Merge separate trp genes into one column so it looks like trpA_trpB
+his.Euclidian<-his.combo %>% 
+  unite("Both", c(V1,V3))
+##Now look at calculating Euclidean distance by turning V2 and V4 into a numeric...
+his.Euclidian$Euclidian = abs(as.numeric(as.character(his.Euclidian$V2)) - as.numeric(as.character(his.Euclidian$V4)))
+```
+
+Now I probably want to add the genome size to the his.Euclidian and trp.Euclidian to see if one any distance is greater than 0.5genome size
+
+```{r}
+smalldata <- Complete.genomes[,c(5,8,14)]
+```
+
+Ok, so to make life easy, I have subsetted the genome name and the genome size. Now what I want to do is cbind then to the his.Euclidian and trp.Euclidan based off of genome name so that I can then write an equation to see if any are more than 0.5genome size.
+
+```{r}
+his.Euclidian = right_join(smalldata, his.Euclidian, by = c("Genome Name / Sample Name" = "Genome Name"))
+```
+Alright, that seemed to work. Now to find out if any are more than 0.5 of genome size. 
+
+```{r}
+##Ok, so I want to count how many are greater than or equal to 0.5genome size
+testeroo <-as.data.frame(which(his.Euclidian$Euclidian > (his.Euclidian$`Genome Size   * assembled`*0.5)))
+##ALRIGHTY!!! So I have 3284 objects in his.Euclidian that are more than 0.5 of the genome. So now I need to write a piece of code that will tell it to work out the opposite. 
+his.Euclidian$V2 <- as.numeric(as.character(his.Euclidian$V2))
+his.Euclidian$V4 <- as.numeric(as.character(his.Euclidian$V4))
+
+his.Euclidian$ID <- seq.int(nrow(his.Euclidian))
+
+#So the if statement did not work at all so now to try a new method. I am filtering everything that is less than 0.5genome into his.Good. This is my pile of "yus, you worked. you are in the good book" Euclidian distances. 
+his.Good <- filter(his.Euclidian, his.Euclidian$Euclidian <= (his.Euclidian$`Genome Size   * assembled`*0.5))
+
+#I am then filtering everything from his.Euclidian that did not work very well. 
+his.ALT <- filter(his.Euclidian, his.Euclidian$Euclidian > (his.Euclidian$`Genome Size   * assembled`*0.5))
+
+#I am now going to apply my alteration to make the Euclidian distances work as they are supposed to
+his.ALT$Euclidian <- (his.ALT$`Genome Size   * assembled` - his.ALT$V2) + his.ALT$V4
+#And then bind the ones that worked into my good books
+his.Good2 <- rbind(his.Good, filter(his.ALT, his.ALT$Euclidian <= (his.ALT$`Genome Size   * assembled`*0.5)))
+#Now I filter again for the ones that did not get fixed in my first alteration.
+his.ALT2 <- filter(his.ALT, his.ALT$Euclidian > (his.ALT$`Genome Size   * assembled`*0.5))
+#And then apply my new equation
+his.ALT2$Euclidian <- (his.ALT2$`Genome Size   * assembled` - his.ALT2$V4) + his.ALT2$V2
+#Now do the final rbind
+his.Good3 <- rbind(his.Good2,his.ALT2)
+##Just to check that it worked. 
+his.ALT3 <- filter(his.ALT2, his.ALT2$Euclidian >= (his.ALT2$`Genome Size   * assembled`*0.5))
+#So all the stuff above worked, now to figure out why I am missing some rows.DONT WORRY. YOURE AN IDIOT AND FORGOT TO RUN THEN ENTIRE CODE EARLIER THAT REMOVED ALL THE GENOMES WITHOUT DUPLICATES AND THATS WHY IT DIDNT WORK. BUT YOURE CODE CHECKING FOUND THAT AND YOU ARE DUMDUM
+which(his.Good3$Euclidian >= (his.Good3$`Genome Size   * assembled`*0.5))
+#And now to double double check that they are the same dataframe
+setdiff(his.Euclidian$ID, his.Good3$ID)
+##Turns out my error was when I tried to left_join instead of right_join the genome size information to the his.Euclidian dataframe. By using a left_join, I ended up adding the genomes with only 1 his gene (and therefore not able to be used in this analysis) back to my dataframe. Well done noob. And that is how I ended up with a difference and weird stuff as I had NA for some Euclidian distances which is obviously not helpful. But now it is done!
+```
+
+
+
+```{r}
+names(his.Good3)[8] <- "his_euclidian"
+his.Good3$normal.euclidian.his <- his.Good3$his_euclidian/(his.Good3$`Genome Size   * assembled`*0.5)
+```
+
+One thing to try is to take the mean fo each euclidian distance of each species. See if that is easier to read. 
+
+```{r}
+med.his <- his.Good3 %>% group_by(`Genome Name / Sample Name`) %>% select(`Genome Name / Sample Name`, Phylum, his_euclidian)
+med.his$his_euclidian <- as.numeric(as.character(med.his$his_euclidian))
+class(med.his$his_euclidian)
+
+med.his <- med.his %>% group_by(`Genome Name / Sample Name`) %>% summarise(median(his_euclidian))
+Complete.genomes <- left_join(Complete.genomes, med.his, by = c("Genome Name / Sample Name" = "Genome Name / Sample Name"))
+
+Complete.genomes$normal.his.med <- Complete.genomes$`median(his_euclidian)` /(Complete.genomes$`Genome Size   * assembled`*0.5)
+```
+
+
+```{r}
+any(is.na(Complete.genomes$Sigma_Ratio))
+
+x <- Complete.genomes[c("Phylum","Sigma_Ratio", "normal.his.med")]
+x <- na.omit(x)
+
+cortest <- cor.test(x$Sigma_Ratio, x$normal.his.med, method = "spearman")
+cortest
+```
+
+This code is for the trp and sigma comparison. As above, exact same code as for trp operon analysis just removed all the stats and the graphs as unnecessary
+
+```{r}
+trp.info = read_excel("Complete trp .xlsx")
+
+trp.info.exclude <- trp.info %>% filter(Gene == "trpR" | Gene == "trpS")
+trp.info <- setdiff(trp.info, trp.info.exclude)
+
+trp.info.scaffold <- trp.info %>% filter(`Genome Name` =="Armatimonas rosea DSM 23562" | `Genome Name` == "Chloracidobacterium thermophilum B" | `Genome Name` == "Chloroflexus islandicus isl-2" | `Genome Name` == "Deinococcus proteolyticus MRP, DSM 20540" | `Genome Name` == "Ktedonobacter racemifer SOSP1-21, DSM 44963
+" | `Genome Name` == "Oscillochloris trichoides DG6")
+trp.info <- setdiff(trp.info, trp.info.scaffold)
+
+trp.info$midpoint = round(((trp.info$`End Coord` - trp.info$`Start Coord`)/2)+trp.info$`Start Coord`)
+```
+
+```{r}
+#OK, so later on the code isn't going to work because there are some genomes with only one trp gene, and you can't make pairs if there is nothing to pair.
+#So first find the duplicated
+dupes<-as.data.frame(trp.info$`Genome Name`[duplicated(trp.info$`Genome Name`)])
+names(dupes)[1] <- "dupe.names"
+#And then make tr_dupes which contains the information from trp.info, exculding all the single trp gene genomes. 
+tr_dupes<-trp.info[trp.info$`Genome Name` %in% dupes$dupe.names,]
+#Convert into data table because it is easier to manipulate this way
+trp.data <- data.table(tr_dupes)
+#Make midpoint characters for easyness and because Lama said so
+trp.data$midpoint <- as.character(trp.data$midpoint)
+#Combine Gene with midpoint data and create new column called Combo with this information
+trp.data <- trp.data %>% unite("Combo", Gene:midpoint, remove = FALSE)
+#And then I come across an error, even though it worked in the trial...?
+trp.data <- lapply(split(trp.data, by = "Genome Name"),
+                     function(x)cbind(`Genome Name` = unique(x$`Genome Name`),
+                                      apply(combn(x$Combo, 2), 2, paste, collapse = "_")))
+#Make a dataframe which has the genome name and the pairwise combinations
+trp.1<-as.data.frame(do.call("rbind", trp.data))
+#Name the column Combo
+names(trp.1)[2]<-"Combo"
+#Create dataframe that has the combinations and midpoints split
+trp.2<-as.data.frame(do.call(rbind, str_split(trp.1$Combo, '_')))
+#Combine the two dataframes
+trp.combo<-cbind(trp.1, trp.2)
+#Merge separate trp genes into one column so it looks like trpA_trpB
+trp.euclidean<-trp.combo %>% 
+  unite("Both", c(V1,V3))
+##Now look at calculating Euclidean distance by turning V2 and V4 into a numeric...
+trp.euclidean$euclidean = abs(as.numeric(as.character(trp.euclidean$V2)) - as.numeric(as.character(trp.euclidean$V4)))
+```
+
+```{r}
+smalldata <- Complete.genomes[,c(5,8,14)]
+
+trp.euclidean = right_join(smalldata, trp.euclidean, by = c("Genome Name / Sample Name" = "Genome Name"))
+
+##Ok, so I want to count how many are greater than or equal to 0.5genome size
+testeroo2 <-as.data.frame(which(trp.euclidean$euclidean > (trp.euclidean$`Genome Size   * assembled`*0.5)))
+##ALRIGHTY!!! So I have 3284 objects in his.euclidean that are more than 0.5 of the genome. So now I need to write a piece of code that will tell it to work out the opposite. 
+trp.euclidean$V2 <- as.numeric(as.character(trp.euclidean$V2))
+trp.euclidean$V4 <- as.numeric(as.character(trp.euclidean$V4))
+
+trp.euclidean$ID <- seq.int(nrow(trp.euclidean))
+
+#So the if statement did not work at all so now to try a new method. I am filtering everything that is less than 0.5genome into his.Good. This is my pile of "yus, you worked. you are in the good book" euclidean distances. 
+trp.Good <- filter(trp.euclidean, trp.euclidean$euclidean <= (trp.euclidean$`Genome Size   * assembled`*0.5))
+
+#I am then filtering everything from his.euclidean that did not work very well. 
+trp.ALT <- filter(trp.euclidean, trp.euclidean$euclidean > (trp.euclidean$`Genome Size   * assembled`*0.5))
+
+#I am now going to apply my alteration to make the euclidean distances work as they are supposed to
+trp.ALT$euclidean <- (trp.ALT$`Genome Size   * assembled` - trp.ALT$V2) + trp.ALT$V4
+#And then bind the ones that worked into my good books
+trp.Good2 <- rbind(trp.Good, filter(trp.ALT, trp.ALT$euclidean <= (trp.ALT$`Genome Size   * assembled`*0.5)))
+#Now I filter again for the ones that did not get fixed in my first alteration.
+trp.ALT2 <- filter(trp.ALT, trp.ALT$euclidean > (trp.ALT$`Genome Size   * assembled`*0.5))
+#And then apply my new equation
+trp.ALT2$euclidean <- (trp.ALT2$`Genome Size   * assembled` - trp.ALT2$V4) + trp.ALT2$V2
+#Now do the final rbind
+trp.Good3 <- rbind(trp.Good2,trp.ALT2)
+##Just to check that it worked. 
+trp.ALT3 <- filter(trp.ALT2, trp.ALT2$euclidean >= (trp.ALT2$`Genome Size   * assembled`*0.5))
+#So all the stuff above worked, now to figure out why I am missing some rows.DONT WORRY. YOURE AN IDIOT AND FORGOT TO RUN THEN ENTIRE CODE EARLIER THAT REMOVED ALL THE GENOMES WITHOUT DUPLICATES AND THATS WHY IT DIDNT WORK. BUT YOURE CODE CHECKING FOUND THAT AND YOU ARE DUMDUM
+which(trp.Good3$euclidean >= (trp.Good3$`Genome Size   * assembled`*0.5))
+#And now to double double check that they are the same dataframe
+setdiff(trp.euclidean$ID, trp.Good3$ID)
+##Turns out my error was when I tried to left_join instead of right_join the genome size information to the his.euclidean dataframe. By using a left_join, I ended up adding the genomes with only 1 his gene (and therefore not able to be used in this analysis) back to my dataframe. Well done noob. And that is how I ended up with a difference and weird stuff as I had NA for some euclidean distances which is obviously not helpful. But now it is done!
+```
+
+```{r}
+names(trp.Good3)[8] <- "trp_euclidean"
+```
+
+Alright, lets do some normalisation to genome size by dividing euclidean distance by 0.5genome
+
+```{r}
+trp.Good3$normal.euclidean.trp <- trp.Good3$trp_euclidean/(trp.Good3$`Genome Size   * assembled`*0.5)
+```
+
+``` {r}
+med.trp <- trp.Good3 %>% group_by(`Genome Name / Sample Name`) %>% select(`Genome Name / Sample Name`, Phylum, trp_euclidean)
+med.trp$trp_euclidean <- as.numeric(as.character(med.trp$trp_euclidean))
+class(med.trp$trp_euclidean)
+
+med.trp <- med.trp %>% group_by(`Genome Name / Sample Name`) %>% summarise(median(trp_euclidean))
+Complete.genomes <- left_join(Complete.genomes, med.trp, by = c("Genome Name / Sample Name" = "Genome Name / Sample Name"))
+
+Complete.genomes$normal.trp.med <- Complete.genomes$`median(trp_euclidean)` /(Complete.genomes$`Genome Size   * assembled`*0.5)
+```
+
+
+
+```{r}
+any(is.na(Complete.genomes$Sigma_Ratio))
+
+y <- Complete.genomes[c("Phylum","Sigma_Ratio", "normal.trp.med")]
+y <- na.omit(y)
+
+cortest <- cor.test(y$Sigma_Ratio, y$normal.trp.med, method = "spearman")
+cortest
+```
+
+```{r}
+rq <- Complete.genomes %>% subset(Phylum == "Planctomycetes")
+rq %>% summary(rq$Sigma_Ratio)
+```
+

@@ -1,0 +1,197 @@
+---
+title: "Genome List"
+author: '9290440'
+date: "2 August 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library("readxl")
+library("tidyverse")
+library("kableExtra")
+library(forcats)
+library(gapminder)
+library(writexl)
+library(RColorBrewer)
+```
+
+Call in final genome list
+
+```{r}
+genomes <- read_excel("Final_Genome_Set.xlsx")
+#And now to see the distribution of the genomes I have collected 
+phylum.graph.new <- ggplot(genomes, mapping = aes(fct_infreq(factor(Phylum)))) + geom_bar() + coord_flip() + ggtitle("Count of Isolate Genomes for each Phylum") + xlab("Phylum") + ylab("Count of Isolates") + geom_text(stat = 'count',aes(label =..count.., hjust = 0.1))
+phylum.graph.new
+
+genomes <- mutate_at(genomes, vars( "Phylum" ,"Class", "Order", "Family", "Genus", "Species"), as.factor)
+```
+
+Now to do some investigation as to how I can further filter genomes greater than 51 isolates. I want to make the large phyla like Proteobacteria a lot smaller so that my results will be less biased towards the larger phyla. To do that I will use PIPES!! to create tables of the individual phyla in question and make some summary table of the distribution of class and order within each phyla
+
+Some tables displaying Proteobacteria distribution in class and then order. Going by the rough guideline above of having no more than ~50 isolates per phyla, one isolate per Order fits quite well here.
+
+One isolate per Order will yield 51 isolates
+
+```{r}
+genomes %>% filter(Phylum == "Proteobacteria") %>% group_by(Class) %>% tally()
+genomes %>% filter(Phylum == "Proteobacteria") %>% group_by(Order) %>% tally() 
+genomes.proteo <- genomes %>% filter(Phylum == "Proteobacteria") %>% filter(`Scaffold Count   * assembled` == 1)
+genomes.proteo %>% group_by(Order) %>% tally()
+genomes.proteo.filt <- genomes.proteo %>% group_by(Order) %>% sample_n(1)
+```
+
+Firmicutes distribution
+
+One isolate per family will yeild 46 isolates
+
+```{r}
+genomes %>% filter(Phylum == "Firmicutes") %>% group_by(Class) %>% tally()
+genomes %>% filter(Phylum == "Firmicutes") %>% group_by(Order) %>% tally()
+genomes %>% filter(Phylum == "Firmicutes") %>% group_by(Family) %>% tally()
+
+genomes.firm <- genomes %>% filter(Phylum == "Firmicutes") %>% filter(`Scaffold Count   * assembled` == 1)
+genomes.firm %>% group_by(Family) %>% tally()
+genomes.firm.filt <- genomes.firm %>% group_by(Family) %>% sample_n(1)
+```
+
+Actinobacteria distribution
+
+One isolate per Family will yield 50 isolates
+
+```{r}
+genomes %>% filter(Phylum == "Actinobacteria") %>% group_by(Class) %>% tally()
+genomes %>% filter(Phylum == "Actinobacteria") %>% group_by(Order) %>% tally()
+genomes %>% filter(Phylum == "Actinobacteria") %>% group_by(Family) %>% tally()
+
+genomes.act <- genomes %>% filter(Phylum == "Actinobacteria") %>% filter(`Scaffold Count   * assembled` == 1)
+genomes.act %>% group_by(Family) %>% tally()
+genomes.act.filt <- genomes.act %>% group_by(Family) %>% sample_n(1)
+```
+
+Bacteroidetes distribution
+
+Ok so Family contains 31 families and Genus has 106 genera
+
+Two isolate per Family will yield ~60 isolates
+
+```{r}
+genomes %>% filter(Phylum == "Bacteroidetes") %>% group_by(Class) %>% tally()
+genomes %>% filter(Phylum == "Bacteroidetes") %>% group_by(Order) %>% tally()
+genomes %>% filter(Phylum == "Bacteroidetes") %>% group_by(Family) %>% tally()
+genomes %>% filter(Phylum == "Bacteroidetes") %>% group_by(Genus) %>% tally()
+
+genomes.bact <- genomes %>% filter(Phylum == "Bacteroidetes") %>% filter(`Scaffold Count   * assembled` == 1)
+genomes.bact %>% group_by(Family) %>% tally()
+genomes.bact.filt <- genomes.bact %>% group_by(Family) %>% sample_n(1)
+```
+
+Tenericutes distribution
+
+Alright, this one is a bit more difficult to cut back on. Genus results in 8 groups and the Species results in 86 groups. So I think the best way around this would be to randomly remove 5 from the Spiroplasma genus and 25 from the Mycoplasma genus so the distribution is a bit more even and will still result in ~50 isolate (will result in 54)
+
+```{r}
+genomes %>% filter(Phylum == "Tenericutes") %>% group_by(Class) %>% tally()
+genomes %>% filter(Phylum == "Tenericutes") %>% group_by(Order) %>% tally()
+genomes %>% filter(Phylum == "Tenericutes") %>% group_by(Family) %>% tally()
+genomes %>% filter(Phylum == "Tenericutes") %>% group_by(Genus) %>% tally()
+
+genomes.ten <- genomes %>% filter(Phylum == "Tenericutes") %>% filter(`Scaffold Count   * assembled` == 1)
+genomes.ten %>% group_by(Family) %>% tally()
+genomes.ten.1 <- genomes.ten %>% subset(genomes.ten$Family == "unclassified")
+genomes.ten <- genomes.ten[-c(74),]
+genomes.ten.filt <- genomes.ten %>% group_by(Family) %>% sample_n(10)
+```
+
+Cyanobacteria distribution
+
+One isolate per Genus will yield 51 isolates
+
+```{r}
+genomes %>% filter(Phylum == "Cyanobacteria") %>% group_by(Class) %>% tally()
+genomes %>% filter(Phylum == "Cyanobacteria") %>% group_by(Order) %>% tally()
+genomes %>% filter(Phylum == "Cyanobacteria") %>% group_by(Family) %>% tally()
+genomes %>% filter(Phylum == "Cyanobacteria") %>% group_by(Genus) %>% tally()
+
+genomes.cyan <- genomes %>% filter(Phylum == "Cyanobacteria")
+genomes.cyan %>% group_by(Family) %>% tally()
+genomes.cyan.filt <- genomes.cyan %>% group_by(Family) %>% sample_n(1)
+```
+
+OK!! After some more painful flitering, we have the final genome collection!
+
+```{r}
+Complete.genomes = read_excel("Complete genome.xlsx")
+
+Complete.genomes <- mutate_at(Complete.genomes, vars( "Phylum" ,"Class", "Order", "Family", "Genus", "Species"), as.factor)
+
+phylum.graph.final <- ggplot(Complete.genomes, mapping = aes(fct_infreq(factor(Phylum)))) + 
+  geom_bar() + 
+  xlab("Phylum") + 
+  ylab("Count of Isolates") + 
+  geom_text(stat = 'count',aes(label =..count.., hjust = 0.5, vjust = -0.5)) + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1)) +
+  ylim (0, 60) + 
+  theme_classic()
+phylum.graph.final + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1))
+ggsave("Plot of genome isolates per Phylum", plot = last_plot(), device = "pdf", width = 8, height = 11)
+
+phylum.graph.poster <- ggplot(Complete.genomes, mapping = aes(fct_infreq(factor(Phylum)))) + geom_bar() + xlab("Phylum") + ylab("Count of Isolates") + geom_text(stat = 'count',aes(label =..count.., hjust = -0.5, vjust = 0.5, size = 40))  +ylim (0, 60) + theme_classic()
+
+abc <- phylum.graph.poster + 
+  coord_flip()  + 
+  theme(axis.text.y = element_text(size = 16),
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 20))
+
+ggsave(
+  "complete.isolate.poster.pdf",
+  plot = last_plot(),
+  device = "pdf",
+  path = NULL,
+  scale = 1,
+  width = 15,
+  height = 10,
+  units = "in",
+  limitsize = TRUE
+)
+
+
+
+ggsave("Plot of genome isolates per Phylum - poster.jpeg", plot = last_plot(), device = "jpeg", width = 3.8, height = 2.4)
+
+unique(Complete.genomes$Phylum)
+
+```
+
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(RColorBrewer)
+poster <- read_xlsx("Book1.xlsx")
+
+poster$Phylum <- as.factor(as.character(poster$Phylum))
+poster$`Isolate count` <- as.numeric(as.character(poster$`Isolate count`))
+class(poster$`Isolate count`)
+
+ggplot(poster, aes(x="", y=Phylum, fill=`Isolate count`)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0)
+
+ggplot(poster, aes(x="", y=Phylum, fill=`Isolate count`)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  
+  theme_void() # remove background, grid, numeric labels
+myPalette <- brewer.pal(6, "Set2")
+
+pie(poster$`Isolate count`, labels = c("Actinobacteria", "Bacteroidetes", "Cyanobacteria", "Firmicutes", "Proteobacteria", "Other 150 phylum"), col = myPalette, border = "white", clockwise = T )
+```
+
+
+
+

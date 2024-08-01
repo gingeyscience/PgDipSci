@@ -1,0 +1,546 @@
+---
+title: "rRNA.operon"
+author: '9290440'
+date: "20 August 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library("readxl")
+library("tidyverse")
+library("kableExtra")
+library(forcats)
+library(gapminder)
+library(writexl)
+library(data.table)
+library(ggpubr)
+library(rstatix)
+library(RColorBrewer)
+```
+
+```{r}
+Complete.genomes = read_excel("Complete genome.xlsx")
+
+finishedrRNA.main.data <- read_excel("rRNA_1scaffold.xlsx")
+```
+
+
+```{r}
+##This code subsets anything within an operon distance, it will not grab the rRNA that is more than 5000bp away from anything either side of it. However after some trial and error, it does grab the initial rRNA which originally it did not
+finishedrRNA <- finishedrRNA.main.data %>% 
+  group_by(`Genome Name`) %>% 
+  dplyr::select(`Gene Product Name`, `Genome Name`, `Start Coord`, `End Coord`, `Gene ID`, `Gene Product Name`) %>% 
+  filter(((`Start Coord`-lag(`Start Coord`)) <=5000) | lead(`Start Coord`-lag(`Start Coord`) <= 5000))
+
+##I am trying to make a function to put all 'full' operons in a group. So then I can count how many groups only have two genes, make that group ==2. And then count how many have full groups and make then group 1  
+
+finishedrRNA$Group <- NA
+  
+  #my_function(df =trying_1, a= "Start Coord",b ="Group")
+
+```
+
+
+Finding my orphan and then adding them to the `Complete genomes` df. 
+```{r}
+x<-as.data.frame(setdiff(finishedrRNA.main.data$`Gene ID`, finishedrRNA$`Gene ID`))
+colnames(x)[1]<-"Orphans"
+##An important piece of code to remember. If Gene Id is in Orphans, then designate 1. Else, designate 0.
+finishedrRNA.main.data$Group3<-ifelse(finishedrRNA.main.data$`Gene ID` %in% x$Orphans, "1", "0")
+
+#Create columns to put my data into.
+
+orphancount <- finishedrRNA.main.data %>% group_by(`Genome Name`) %>% count(`Group3`)
+
+
+orphan.distribution <- finishedrRNA.main.data %>% group_by(`Genome Name`) %>% dplyr::select(`Gene Product Name`, `Group3`)
+orphan.distribution <- orphan.distribution %>% filter(`Group3`==1)
+
+orphancount <- finishedrRNA.main.data[which(finishedrRNA.main.data$Group3==1), ]
+orphancount <- orphancount %>% group_by(`Genome Name`) %>% count(Group3)
+colnames(orphancount)[3] <- "Orphan_rRNA"
+
+orphancount <- orphancount[-c(2)]
+
+##I have added the orphan count to each individual isolate.
+Complete.genomes <- left_join(Complete.genomes, orphancount, by = c("Genome Name / Sample Name" = "Genome Name"))
+
+```
+
+##WHOOOOOO I have my operons labelled
+```{r}
+count = 1
+finishedrRNA$Group[1]=1
+for (i in 1:nrow(finishedrRNA)){
+  
+  var_2 = i+1
+  
+  if (var_2 == nrow(finishedrRNA)){
+    finishedrRNA$Group[var_2] = count
+    break
+  }
+  if ((finishedrRNA$`Genome Name`[i] == finishedrRNA$`Genome Name`[var_2]) ){
+    
+    
+    if (finishedrRNA$`Start Coord`[var_2] - finishedrRNA$`Start Coord`[i] < 5000 ){
+      finishedrRNA$Group[var_2] = count
+      
+    }
+    else if (finishedrRNA$`Start Coord`[var_2] - finishedrRNA$`Start Coord`[i] >= 5000 ){
+      count = count+1
+      finishedrRNA$Group[var_2] = count
+    }
+    
+  }
+  else {
+    
+    count = 1
+    finishedrRNA$Group[var_2] = count
+    
+    
+  }
+  
+}
+
+```
+
+
+Alright now to try find the incomplete operons. 
+
+```{r}
+count.duplicates <- function(DF){
+x <- do.call('paste', c(DF, sep = '\r'))
+  ox <- order(x)
+  rl <- rle(x[ox])
+  cbind(DF[ox[cumsum(rl$lengths)],,drop=FALSE],count = rl$lengths)
+
+}
+half <- count.duplicates(finishedrRNA[,c(2,6)])
+##Ok so this one here is all of my genomes that have an incomplete operon. 
+half_2 <- subset(half, half$count==2)
+half_2$`Genome Name` <-  as.factor(as.character(half_2$`Genome Name`))
+half_2.5 <- half_2 %>% group_by(`Genome Name`) %>% count(`Genome Name`)
+colnames(half_2.5)[2] <- "Incomplete_rRNA"
+##I NOW HAVE MY INCOMPLETE IN MY MAIN DATA FRAME!!
+Complete.genomes <- left_join(Complete.genomes, half_2.5, by = c("Genome Name / Sample Name" = "Genome Name"))
+
+
+##And then do a cheeky switcheroo
+half_3 <- subset(half, half$count >=3)
+half_3$`Genome Name` <-  as.factor(as.character(half_3$`Genome Name`))
+half_3.5 <- half_3 %>% group_by(`Genome Name`) %>% count(`Genome Name`)
+colnames(half_3.5)[2] <- "Tight_rRNA"
+##I NOW HAVE MY INCOMPLETE IN MY MAIN DATA FRAME!!
+Complete.genomes <- left_join(Complete.genomes, half_3.5, by = c("Genome Name / Sample Name" = "Genome Name"))
+```
+
+
+
+YUSS BITCH! 
+
+Ok, now to make some boxplots of the count of each rRNA group in Phylum
+
+
+Ok maybe I need to create a subset of only the phylum data and the rRNA data, then smoosh them all together so that I only have one column per phyla with all the rRNA counts in one column each
+```{r}
+graph_data <- Complete.genomes  %>% dplyr::select(`Phylum`, Incomplete_rRNA, Tight_rRNA, Orphan_rRNA)
+graph_data$Incomplete_rRNA <- as.numeric(as.character(graph_data$Incomplete_rRNA))
+graph_data$Tight_rRNA <- as.numeric(as.character(graph_data$Tight_rRNA))
+graph_data$Orphan_rRNA <- as.numeric(as.character(graph_data$Orphan_rRNA))
+
+graph_data_orphan <- count(graph_data, graph_data$Phylum, graph_data$Orphan_rRNA)
+graph_data_orphan$final.count.Orphan <- (graph_data_orphan$`graph_data$Orphan_rRNA`*graph_data_orphan$n)
+graph_data_orphan <- graph_data_orphan %>% dplyr::select(`graph_data$Phylum`, final.count.Orphan) %>% na.omit()
+
+graph_data_orphan$`graph_data$Phylum` <- as.factor(as.character(graph_data_orphan$`graph_data$Phylum`))
+b<-as.data.frame(tapply(graph_data_orphan$final.count.Orphan, graph_data_orphan$`graph_data$Phylum`, FUN =sum))
+
+graph_data_tight <- count(graph_data, graph_data$Phylum, graph_data$Tight_rRNA)
+graph_data_tight$final.count.Tight <- (graph_data_tight$`graph_data$Tight_rRNA`*graph_data_tight$n)
+graph_data_tight <- graph_data_tight %>% dplyr::select(`graph_data$Phylum`, final.count.Tight) %>% na.omit()
+graph_data_tight$`graph_data$Phylum` <- as.factor(as.character(graph_data_tight$`graph_data$Phylum`))
+c <- as.data.frame(tapply(graph_data_tight$final.count.Tight, graph_data_tight$`graph_data$Phylum`, FUN = sum))
+
+
+graph_data_incomplete <- count(graph_data, graph_data$Phylum, graph_data$Incomplete_rRNA)
+graph_data_incomplete$final.count.Incomplete <- (graph_data_incomplete$`graph_data$Incomplete_rRNA`*graph_data_incomplete$n)
+graph_data_incomplete <- graph_data_incomplete %>% dplyr::select(`graph_data$Phylum`, final.count.Incomplete) %>% na.omit()
+graph_data_incomplete$`graph_data$Phylum` <- as.factor(as.character(graph_data_incomplete$`graph_data$Phylum`))
+d <- as.data.frame(tapply(graph_data_incomplete$final.count.Incomplete, graph_data_incomplete$`graph_data$Phylum`, FUN = sum))
+
+colnames(b)[1] <- "Orphan count"
+colnames(c)[1] <- "Tight count"
+colnames(d)[1] <- "Incomplete count"
+
+b<-tibble::rownames_to_column(b, "Phylum")
+c <- tibble::rownames_to_column(c, "Phylum")
+d <- tibble::rownames_to_column(d, "Phylum")
+
+my.complete.operon.status <- right_join(b,c, by = "Phylum")
+my.complete.operon.status <- left_join(my.complete.operon.status,d, by = "Phylum")
+my.complete.operon.status <- my.complete.operon.status[, c(1, 3, 4, 2)]
+colnames(my.complete.operon.status)[3] <- "Incomplete count"
+```
+
+Ok, now that I have to data arranged in a way that I can hopefully. I might want this in a ling format?
+
+```{r}
+graph.trial <- gather(my.complete.operon.status, status, value, `Tight count`:`Orphan count`)
+
+```
+
+```{r}
+graph.trial[is.na(graph.trial)] = 0
+
+phylalist = unique(graph.trial$Phylum)
+
+results_df = data.frame(Phylum = as.factor("tmp"),
+                        status = as.factor("tmp"),
+                        value = 0)
+i=1
+for (i in 1:length(phylalist)) {
+  
+  tmp1 = subset(graph.trial, Phylum == paste0(phylalist[i]))
+  
+  value = sum(tmp1$value)
+  Tight_value = tmp1[1,3]/value
+  Incomplete_value = tmp1[2,3]/value
+  Orphan_value = tmp1[3,3]/value
+  
+  tmp_df = data.frame(Phylum = as.factor(tmp1$Phylum),
+                        status = as.factor(tmp1$status),
+                        value = c(Tight_value,
+                                  Incomplete_value,
+                                  Orphan_value))
+  
+  results_df = rbind(results_df, tmp_df)
+}
+  
+results_df = results_df[-1,]
+
+
+results_df$status = factor(results_df$status,
+                            levels = c("Tight count",
+                                       "Incomplete count",
+                                       "Orphan count"))
+
+#graph.trial$status <- as.factor(as.character(status))
+plot <- ggplot(results_df, aes(fill = status,
+                        y = value,
+                        x = fct_reorder(Phylum,
+                                        value,
+                                        .desc = T),
+                        group = status)) +
+  geom_bar(position = "fill",
+           stat = "identity") +
+  ylab("Percentage") + 
+  xlab("Phylum")+ 
+  coord_flip() +
+  theme_classic()
+
+plot <- plot + scale_fill_brewer(palette = "Set2") 
+
+abc <- plot  + theme(axis.text.y = element_text(size = 16),
+                                axis.title.x = element_text(size = 16)) +
+  theme(axis.title.y = element_blank()) +
+  scale_fill_brewer(palette = "Set2")
+abc
+
+##FIX THIS GRAPH. YOU DONE GONE FUCKED UP SOMEWHERE AND CHANGED YOUR DATA TO ONLY THE ONES WITH ORPHAN STUFF> IDIOTA
+##Its ok you knob, you fixed it. Make sure you use the correct 'join'
+```
+
+
+I would like to look at the distribution of orphan count and see which rRNA is most prevalent. Earlier I made the `orphan.distribution` dataframe for this exact purpose.
+
+```{r}
+orphan.distribution$`Gene Product Name` = as.factor(as.character(orphan.distribution$`Gene Product Name`))
+orphan.distribution.1 <- orphan.distribution[c(2,3)]
+orphan.distribution.1 <- orphan.distribution.1 %>% count(`Gene Product Name`)
+orphan.distribution.1$rRNA <- "rRNA"
+
+orphan.plot <- ggplot(orphan.distribution.1, aes(fill = orphan.distribution.1$`Gene Product Name`, 
+                                                 y = orphan.distribution.1$n, 
+                                                 x = orphan.distribution.1$rRNA)) +
+  geom_bar(position = "fill", stat = "identity") + 
+  xlab("rRNA") + 
+  ylab("Percentage") +
+  theme_classic() +
+  scale_fill_brewer(palette = "Set2") + 
+  guides(fill=guide_legend(title="rRNA"))
+
+orphan.plot 
+```
+
+And maybe a phylum match?
+
+```{r}
+small.genome.species <- Complete.genomes %>% dplyr::select(`Genome Name / Sample Name`, Phylum)
+orphan.distribution <- left_join(orphan.distribution, small.genome.species, by = c("Genome Name" = "Genome Name / Sample Name"))
+orphan.distribution.2 <- orphan.distribution[c(2,4)]
+orphan.distribution.2$rRNA <- "rRNA"
+orphan.distribution.2 <- orphan.distribution.2 %>% group_by(Phylum) %>% count(`Gene Product Name`)
+
+orphan.bar <- ggplot(orphan.distribution.2, aes(fill = orphan.distribution.2$`Gene Product Name`, 
+                                                y = orphan.distribution.2$n, 
+                                                x = orphan.distribution.2$Phylum)) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  xlab("Phylum") + 
+  ylab(" rRNA count") + 
+  theme_classic() + 
+  scale_fill_discrete(name = "rRNA", labels = c("16S", "23S", "5S")) +
+  scale_fill_brewer(palette = "Set2") +
+  guides(fill=guide_legend(title="rRNA"))
+
+orphan.bar + theme(axis.text.x = element_text(angle = 60, hjust = 1.1, vjust = 1))
+
+```
+
+
+```{r}
+plot
+
+class(Complete.genomes$`Genome Size   * assembled`)
+class(Complete.genomes$Phylum)
+
+genome.size <- Complete.genomes %>% 
+  dplyr::select(Phylum, `Genome Size   * assembled`)
+
+genome.size$`Genome Size   * assembled` <- as.numeric(as.character(genome.size$`Genome Size   * assembled`))
+
+
+
+class(genome.size$`Genome Size   * assembled`)
+genome.size <- genome.size %>% dplyr::group_by(Phylum) %>% summarise(mean = mean(`Genome Size   * assembled`), n = n())
+genome.size$meanMb <- genome.size$mean/1000000
+
+level_order <- c("Deinococcus-Thermus", "Spirochaetes", "Planctomycetes", "Armatimonadetes", "Nitrospirae", "Chloroflexi", "Gemmatimonadetes", "Tenericutes", "Cyanobacteria", "Bacteroidetes", "Fusobacteria", "Actinobacteria", "Chlamydiae", "Firmicutes", "Thermotogae", "Proteobacteria", "Acidobacteria", "Aquificae", "Caldiserica", "Calditrichaeota", "Candidatus Saccharibacteria", "Chlorobi", "Chrysiogenetes", "Coprothermobacterota", "Deferribacteres", "Dictyoglomi", "Elusimicrobia", "Fibrobacteres", "Ignavibacteriae", "Lentisphaerae", "Synergistetes", "Thermodesulfobacteria", "Verrucomicrobia")
+
+```
+
+
+```{r}
+rna1 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 0:5)
+rna2 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 6:10)
+rna3 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 11:15)
+rna4 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 16:20)
+rna5 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 21:25)
+rna6 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 26:30)
+rna7 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 31:35)
+rna8 <- Complete.genomes %>% dplyr::filter(total.rRNA.count %in% 36:40)
+```
+
+```{r}
+ggplot(Complete.genomes, 
+       aes(x = fct_reorder(Phylum, genome.MB, .desc = TRUE, .fun = median, na.rm = TRUE), 
+           y = genome.MB)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  coord_flip() +
+  geom_point(data=rna1, aes(x=Phylum,y=genome.MB), color='#1b9e77') +
+  geom_point(data=rna2, aes(x=Phylum,y=genome.MB), color='#d95f02') +
+  theme_bw()
+
+ggplot(Complete.genomes, 
+       aes(x = fct_reorder(Phylum, genome.MB, .desc = TRUE, .fun = median, na.rm = TRUE), 
+           y = genome.MB)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  coord_flip() +
+  geom_point(data=rna3, aes(x=Phylum,y=genome.MB), color='#7570b3') +
+  geom_point(data=rna4, aes(x=Phylum,y=genome.MB), color='#e7298a') +
+  geom_point(data=rna5, aes(x=Phylum,y=genome.MB), color='#66a61e') +
+  geom_point(data=rna6, aes(x=Phylum,y=genome.MB), color='#e6ab02') +
+  geom_point(data=rna7, aes(x=Phylum,y=genome.MB), color='#a6761d') +
+  geom_point(data=rna8, aes(x=Phylum,y=genome.MB), color='#666666') + theme_bw()
+
+rRNA <- c("Copy number 0-5", "Copy number 6-10", "Copy number 11-15", "Copy number 16-20", "Copy number 21-25", "Copy number 26-30", "Copy number 31-35", "Copy number 36-40")
+
+x <- c(1, 2, 3, 4, 5, 6, 7, 8)
+
+y <- c(1, 2, 3, 4, 5, 6, 7, 8)
+
+df <- data.frame(rRNA, x, y)
+
+legend_cols <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666")
+
+align_legend.1 <- get_legend(ggplot(df, aes(x, y)) +
+
+                             geom_point(aes(colour = rRNA), show.legend = T) +
+
+                             scale_colour_manual(values = legend_cols) +
+
+                             theme(legend.background = element_blank(),
+
+                                   legend.key = element_blank(),
+
+                                   legend.text = element_text(size = 7)))
+```
+
+
+Graph showing isolates with orphan rRNA and their genome sizes
+```{r}
+frag.o <- Complete.genomes %>% dplyr::filter(Orphan_rRNA %in% 1:6)
+frag.i <- Complete.genomes %>% dplyr::filter(Incomplete_rRNA %in% 1:4)
+
+
+ggplot(Complete.genomes, 
+       aes(x = fct_reorder(Phylum, genome.MB, .desc = TRUE, .fun = median, na.rm = TRUE), 
+           y = genome.MB)) + 
+  geom_boxplot() + 
+  coord_flip() +
+  geom_point(data=frag.o, aes(x=Phylum,y=genome.MB), color='#1b9e77') +
+  xlab("Phylum") +
+  theme_classic()
+```
+
+
+
+```{r}
+a <- ggplot(Complete.genomes, 
+       aes(x = fct_reorder(Phylum, genome.MB, .desc = TRUE, .fun = median, na.rm = TRUE), 
+           y = genome.MB)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  coord_flip() +
+  geom_point(data=rna1, aes(x=Phylum,y=genome.MB), color='#1b9e77') +
+  geom_point(data=rna2, aes(x=Phylum,y=genome.MB), color='#d95f02') +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+b <- ggplot(Complete.genomes, 
+       aes(x = fct_reorder(Phylum, genome.MB, .desc = TRUE, .fun = median, na.rm = TRUE), 
+           y = genome.MB)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  coord_flip() +
+  geom_point(data=rna3, aes(x=Phylum,y=genome.MB), color='#7570b3') +
+  geom_point(data=rna4, aes(x=Phylum,y=genome.MB), color='#e7298a') + 
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+c <- ggplot(Complete.genomes, 
+       aes(x = fct_reorder(Phylum, genome.MB, .desc = TRUE, .fun = median, na.rm = TRUE), 
+           y = genome.MB)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  coord_flip() +
+  geom_point(data=rna5, aes(x=Phylum,y=genome.MB), color='#66a61e') +
+  geom_point(data=rna6, aes(x=Phylum,y=genome.MB), color='#e6ab02') +
+  geom_point(data=rna7, aes(x=Phylum,y=genome.MB), color='#a6761d') +
+  geom_point(data=rna8, aes(x=Phylum,y=genome.MB), color='#666666') + 
+  theme_bw() +
+  xlab("Phylum")
+
+ggarrange(a, b, c, labels = "AUTO", nrow = 3)
+ggsave("test.pdf", width = 8.3, height = 11.7)
+
+crappy.graph <- ggplot(Complete.genomes, 
+       aes(x = fct_reorder(Phylum, genome.MB, .desc = TRUE, .fun = median, na.rm = TRUE), 
+           y = genome.MB)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  coord_flip() +
+  geom_point(data=rna1, aes(x=Phylum,y=genome.MB), color='#1b9e77') +
+  geom_point(data=rna2, aes(x=Phylum,y=genome.MB), color='#d95f02') +
+  geom_point(data=rna3, aes(x=Phylum,y=genome.MB), color='#7570b3') +
+  geom_point(data=rna4, aes(x=Phylum,y=genome.MB), color='#e7298a') + 
+  geom_point(data=rna5, aes(x=Phylum,y=genome.MB), color='#66a61e') +
+  geom_point(data=rna6, aes(x=Phylum,y=genome.MB), color='#e6ab02') +
+  geom_point(data=rna7, aes(x=Phylum,y=genome.MB), color='#a6761d') +
+  geom_point(data=rna8, aes(x=Phylum,y=genome.MB), color='#666666') + 
+  theme_bw() +
+  ylab("Genome size (Mb)") +
+  xlab("Phylum")
+crappy.graph
+
+
+```
+
+```{r}
+write_xlsx(Complete.genomes, "rRNA.stuff.xlsx")
+```
+
+23S ratio for looking at genome
+```{r}
+Complete.genomes$ratio.23 <- ((Complete.genomes$`23S rRNA Count   * assembled`)/Complete.genomes$genome.MB)
+
+highlight.complete <- Complete.genomes %>% filter(Phylum == "Armatimonadetes")
+highlight.ecoli <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Escherichia coli O157 644-PT8" )
+highlight.bsub <- Complete.genomes %>% filter(`Genome Name / Sample Name` == "Bacillus subtilis inaquosorum KCTC 13429")
+
+ratio23 <- ggplot(Complete.genomes, aes(x = fct_reorder(Phylum, ratio.23, .desc = TRUE, .fun = median, na.rm = TRUE), 
+                                             y = ratio.23)) + 
+  geom_boxplot() +
+  xlab("Phylum") +ylab("23S rRNA ratio") +
+  theme_classic() +
+  coord_flip() +
+  geom_point(data=highlight.complete, aes(x=Phylum,y=ratio.23), color='red') +
+  geom_point(data=highlight.ecoli, aes(x=Phylum,y=ratio.23), color='green') +
+  geom_point(data=highlight.bsub, aes(x=Phylum,y=ratio.23), color='blue')
+
+ratio23
+```
+
+
+```{r}
+class(subbysub$Phylum)
+subbysub$Phylum <- as.factor(as.character(subbysub$Phylum))
+
+subbysub <- subbysub[-c(3,4)]
+sub2 <- subbysub %>% group_by("Phylum") %>% count("Tight_rRNA")
+
+sub3 <- subbysub %>% group_by_("Phylum") %>% summarize_if(is.numeric, sum, na.rm = T)
+sub3$total <- sub3$Tight_rRNA + sub3$frag
+
+```
+
+
+Performing the binomial test
+
+```{r}
+# bnding results to f, initizlie
+
+f<-NULL;
+
+# use an ugly for loop, do for all rows in dataframe
+
+for(i in c(1:33))
+
+{
+
+#print(joined2$total[i])
+
+# This is how I define my thingies for the test
+
+r<-binom.test(sub3$frag[i], sub3$total[i], 0.27, alternative = "greater")
+
+#print(r)
+
+# bind them to my variable
+
+f<-rbind(f, c(r$statistic, r$parameter, r$null.value, r$p.value))
+
+++i
+
+}
+
+# name my results
+
+colnames(f)[4] = "p.val"
+
+# Not significant after FDR correction
+
+h <- p.adjust(f[,4], method="BH")
+#f$p.adjust <- as.data.frame(t(p.adjust(f[,4], method="BH")))
+g <- as.data.frame(unlist(p.adjust(f[,4], method="BH")))
+
+sub3 <-  cbind(sub3, g)
+
+sub3 <- sub3 %>% rename( P.adjust = `unlist(p.adjust(f[, 4], method = "BH"))`)
+sub3
+
+```
+
+
+
